@@ -12,9 +12,11 @@
 # [ ] Limit amount of files showed in duplicate summary. File x, y, z "and 2 other files"
 # [X] Better OS compatibility (make it work on macOS, not just Linux)
 # [ ] Support common sizes for sizefilter param (B,K,M,G,T)
-#
+# [ ] Help switch
+# [X] Truncate when filenames are too long to prevent newlines during file scan
+# [ ] Add non-compact GUI, use this as default?
 # Known bugs
-# - "Scanning.." message uses pwd instead of scandir to display scan location
+# - Filename truncation does not seem to work with non-latin characters (such as japanese hiragana)
 
 scandir="$1"
 ! [[ -d "$1" ]] && echo -e "'$1' is not a valid directory." && exit
@@ -52,16 +54,19 @@ LIGHTYELLOW="\x1b[33;01m"
 YELLOW="\x1b[33;11m"
 
 trap_handler(){
-  echo "superdupr terminated at $(date)"
-  tput sgr0
-  tput cnorm
-  exit
+	reset
+	echo "superdupr terminated at $(date)"
+	tput sgr0
+	tput cnorm
+	exit
 }
 
 get_os(){
+	# fallback and Linux will use assume GNU/Linux binaries, not BSD binaries/syntax
 	os_family="Unknown"
 	os_id="Fallback"
 	os_filesize_in_bytes='stat -c%s'
+
 	if [[ -f '/etc/os-release' ]]; then
 		 source /etc/os-release
 		 os_family=Linux
@@ -83,9 +88,28 @@ get_sum(){
 }
 
 recurse_trace(){
+	current_object_name="$1"
+	display_length=$(tput cols)
+	while [[ ${#current_object_name} -ge $display_length ]]; do
+		#echo "reduce loop[${#current_object_name} > $display_length]:"
+		#echo "$current_object_name"
+		local reduction=true
+		current_object_name="${current_object_name:5}"
+	done
+	if [[ $reduction == true ]]; then
+		current_object_name="... ${current_object_name}"
+		current_object_name="${current_object_name:0:${display_length}}"
+		#echo "reduce result:"
+		#echo "$current_object_name"
+		#sleep 5
+		#reset
+	fi
 	tput rc
 	tput el
-	echo -n -e "${MAGENTA}r${GREEN}> ${LIGHTBLACK}calls ${DEF}$recurse_calls${LIGHTBLACK} stack ${DEF}$recurse_stackdepth ${MAGENTA}#${LIGHTBLACK} files ${DEF}$recurse_files${LIGHTBLACK} dirs ${DEF}$recurse_dirs${LIGHTBLACK} depth ${DEF}$recurse_fsdepth ${MAGENTA}#${LIGHTBLACK} sizes ${DEF}$recurse_sizes${LIGHTBLACK} checksums ${DEF}$recurse_checksums ${MAGENTA}#${LIGHTBLACK} dupes ${DEF}${#superdupr_checksums[@]}${DEF} ${MAGENTA}#${LIGHTBLACK} p1 ${DEF}${1}${DEF}"
+	echo -e "${MAGENTA}r${GREEN}> ${LIGHTBLACK}calls ${DEF}$recurse_calls${LIGHTBLACK} stack ${DEF}$recurse_stackdepth ${MAGENTA}#${LIGHTBLACK} files ${DEF}$recurse_files${LIGHTBLACK} dirs ${DEF}$recurse_dirs${LIGHTBLACK} depth ${DEF}$recurse_fsdepth ${MAGENTA}#${LIGHTBLACK} sizes ${DEF}$recurse_sizes${LIGHTBLACK} checksums ${DEF}$recurse_checksums ${MAGENTA}#${LIGHTBLACK} dupes ${DEF}${#superdupr_checksums[@]}${DEF}"
+	tput el
+	echo -e "${current_object_name}"
+
 }
 
 # recurse
@@ -146,13 +170,13 @@ get_os
 if [[ "$os_family" == 'Unknown' ]]; then
 	echo "Warning, unable to determine OS. Defaulting to generic Linux utilities syntax"
 fi
-echo "Scanning $(pwd)... Size filter: $(( sizefilter / 1024 / 1024 ))M"
+echo "Scanning ${scandir}... Size filter: $(( sizefilter / 1024 / 1024 ))M"
 tput sc
 tput civis
 recurse "$scandir"
 echo
 if [[ "${#superdupr_checksums[@]}" -ge 1 ]]; then
-	echo -e "Found${LIGHTYELLOW}${#superdupr_checksums[@]}${DEF} possible duplicate(s)"
+	echo -e "Found ${LIGHTYELLOW}${#superdupr_checksums[@]}${DEF} possible duplicate(s)"
 	echo
 	fake_dupes=0
 	duplicate_counter=1
