@@ -15,6 +15,8 @@
 # [ ] Help switch
 # [X] Truncate when filenames are too long to prevent newlines during file scan
 # [ ] Add non-compact GUI, use this as default?
+# [ ] Strip uneccessary trailing forwardslash from $1
+# [ ] Verify that $1 is a directory
 # Known bugs
 # - Filename truncation does not seem to work with non-latin characters (such as japanese hiragana)
 
@@ -23,11 +25,17 @@ scandir="$1"
 [[ -z "$2" ]] && sizefilter="0" || sizefilter="$2"
 sizefilter=$(( sizefilter * 1024 * 1024 ))
 
+gui=super
+
 recurse_calls=0
+recurse_stackdepth=0
 recurse_files=0
 recurse_dirs=0
+recurse_fsdepth=0
 recurse_sizes=0
 recurse_checksums=0
+superdupr_checksums=0
+
 
 declare -A superdupr_size_counter
 declare -A superdupr_sizes
@@ -54,10 +62,9 @@ LIGHTYELLOW="\x1b[33;01m"
 YELLOW="\x1b[33;11m"
 
 trap_handler(){
-	reset
 	echo "superdupr terminated at $(date)"
-	tput sgr0
 	tput cnorm
+	tput sgr0
 	exit
 }
 
@@ -78,16 +85,7 @@ get_os(){
 	fi
 
 }
-
-get_filesize(){
-	${os_filesize_in_bytes} "${1}"
-}
-
-get_sum(){
-  shasum "${1}" | cut -f1 -d' '
-}
-
-recurse_trace(){
+gui_compact(){
 	current_object_name="$1"
 	display_length=$(tput cols)
 	while [[ ${#current_object_name} -ge $display_length ]]; do
@@ -109,7 +107,64 @@ recurse_trace(){
 	echo -e "${MAGENTA}r${GREEN}> ${LIGHTBLACK}calls ${DEF}$recurse_calls${LIGHTBLACK} stack ${DEF}$recurse_stackdepth ${MAGENTA}#${LIGHTBLACK} files ${DEF}$recurse_files${LIGHTBLACK} dirs ${DEF}$recurse_dirs${LIGHTBLACK} depth ${DEF}$recurse_fsdepth ${MAGENTA}#${LIGHTBLACK} sizes ${DEF}$recurse_sizes${LIGHTBLACK} checksums ${DEF}$recurse_checksums ${MAGENTA}#${LIGHTBLACK} dupes ${DEF}${#superdupr_checksums[@]}${DEF}"
 	tput el
 	echo -e "${current_object_name}"
+}
 
+gui_super(){
+	p1="$1"
+	if [[ "$gui_super_init" == true ]]; then
+		gui_super_fn recurse_print "$p1"
+	else
+		gui_super_fn init
+		gui_super_fn header
+		gui_super_init=true
+	fi																		
+}
+gui_super_fn(){
+	p1="$1"
+	p2="$2"
+	case "$1" in
+		init)
+			clear
+			;;
+		header)
+			echo -e "${GREEN}  .dBBBBP   dBP dBP dBBBBBb  dBBBP dBBBBBb    dBBBBb  dBP dBP dBBBBBb dBBBBBb"
+			echo -e "${MAGENTA}  BP                    dB'            dBP       dB'              dB'     dBP"
+			echo -e "${GREEN}  \`BBBBb  dBP dBP   dBBBP' dBBP    dBBBBK   dBP dB' dBP dBP   dBBBP'  dBBBBK "
+			echo -e "${GREEN}     dBP dBP_dBP   dBP    dBP     dBP  BB  dBP dB' dBP_dBP   dBP     dBP  BB "
+			echo -e "${GREEN}dBBBBP' dBBBBBP   dBP    dBBBBP  dBP  dB' dBBBBB' dBBBBBP   dBP     dBP  dB'${DEF}"
+			echo
+			tput sc
+			;;
+		recurse_print)
+			shift
+			tput rc
+			tput el
+			if [[ "$recurse_files" -ne 0 ]]; then
+				progress=$(( recurse_files + recurse_dirs ))
+				progress_percent=$(( progress * 100 / prescan_counter * 100 / 100 )) # imitate floating point arithmetic with integers
+			fi
+
+			echo "${progress}/${prescan_counter} (${progress_percent}%)"
+			#echo -e "${LIGHTBLACK}calls ${DEF}$recurse_calls${LIGHTBLACK} stack ${DEF}$recurse_stackdepth ${MAGENTA}#${LIGHTBLACK} files ${DEF}$recurse_files${LIGHTBLACK} dirs ${DEF}$recurse_dirs${LIGHTBLACK} depth ${DEF}$recurse_fsdepth ${MAGENTA}#${LIGHTBLACK} sizes ${DEF}$recurse_sizes${LIGHTBLACK} checksums ${DEF}$recurse_checksums ${MAGENTA}#${LIGHTBLACK} dupes ${DEF}${#superdupr_checksums[@]}${DEF}"
+			tput el
+			echo "$p2"
+			;;
+		stats_print)
+
+	esac
+}
+
+
+get_filesize(){
+	${os_filesize_in_bytes} "${1}"
+}
+
+get_sum(){
+  shasum "${1}" | cut -f1 -d' '
+}
+
+recurse_trace(){
+	"gui_${gui}" "$1"
 }
 
 # recurse
@@ -120,7 +175,18 @@ recurse_trace(){
 #           if filesize higher than sizelimit threshold
 #               store increment size counter for this size
 #               store filename in first occurence array if it is first file of this exact size
-
+prescan(){
+	for i in "$1"/*; do
+		if [[ -d "$i" ]] && ! [[ -L "$i" ]]; then
+			#echo dir
+			prescan "$i"
+			(( prescan_counter++ ))
+		elif [[ -f "$i" ]] && ! [[ -L "$i" ]]; then
+			#echo fil: "$i"
+			(( prescan_counter++ ))
+		fi
+	done
+}
 recurse(){
 	recurse_trace "$1"
 	(( recurse_calls++ ))
@@ -165,12 +231,14 @@ recurse(){
 }
 
 trap trap_handler EXIT SIGTERM
+clear
 echo "superdupr started at $(date)"
 get_os
 if [[ "$os_family" == 'Unknown' ]]; then
 	echo "Warning, unable to determine OS. Defaulting to generic Linux utilities syntax"
 fi
 echo "Scanning ${scandir}... Size filter: $(( sizefilter / 1024 / 1024 ))M"
+prescan "$scandir"
 tput sc
 tput civis
 recurse "$scandir"
