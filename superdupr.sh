@@ -12,20 +12,34 @@
 # [ ] Limit amount of files showed in duplicate summary. File x, y, z "and 2 other files"
 # [X] Better OS compatibility (make it work on macOS, not just Linux)
 # [ ] Support common sizes for sizefilter param (B,K,M,G,T)
-#
+# [ ] Help switch
+# [X] Truncate when filenames are too long to prevent newlines during file scan
+# [ ] Add non-compact GUI, use this as default?
+# [ ] Strip uneccessary trailing forwardslash from $1
+# [ ] Verify that $1 is a directory
 # Known bugs
-# - "Scanning.." message uses pwd instead of scandir to display scan location
+# - Filename truncation does not seem to work with non-latin characters (such as japanese hiragana)
 
 scandir="$1"
 ! [[ -d "$1" ]] && echo -e "'$1' is not a valid directory." && exit
 [[ -z "$2" ]] && sizefilter="0" || sizefilter="$2"
 sizefilter=$(( sizefilter * 1024 * 1024 ))
 
+gui=super
+
 recurse_calls=0
+recurse_stackdepth=0
 recurse_files=0
 recurse_dirs=0
+recurse_fsdepth=0
 recurse_sizes=0
 recurse_checksums=0
+superdupr_checksums=0
+
+
+export prescan_counter=0
+export prescan_done=false
+echo "$prescan_counter" > /run/shm/superdupr_prescan
 
 declare -A superdupr_size_counter
 declare -A superdupr_sizes
@@ -52,16 +66,18 @@ LIGHTYELLOW="\x1b[33;01m"
 YELLOW="\x1b[33;11m"
 
 trap_handler(){
-  echo "superdupr terminated at $(date)"
-  tput sgr0
-  tput cnorm
-  exit
+	echo "superdupr terminated at $(date)"
+	tput cnorm
+	tput sgr0
+	exit
 }
 
 get_os(){
+	# fallback and Linux will use assume GNU/Linux binaries, not BSD binaries/syntax
 	os_family="Unknown"
 	os_id="Fallback"
 	os_filesize_in_bytes='stat -c%s'
+
 	if [[ -f '/etc/os-release' ]]; then
 		 source /etc/os-release
 		 os_family=Linux
@@ -73,6 +89,123 @@ get_os(){
 	fi
 
 }
+gui_compact(){
+	current_object_name="$1"
+	display_length=$(tput cols)
+	while [[ ${#current_object_name} -ge $display_length ]]; do
+		#echo "reduce loop[${#current_object_name} > $display_length]:"
+		#echo "$current_object_name"
+		local reduction=true
+		current_object_name="${current_object_name:5}"
+	done
+	if [[ $reduction == true ]]; then
+		current_object_name="... ${current_object_name}"
+		current_object_name="${current_object_name:0:${display_length}}"
+		#echo "reduce result:"
+		#echo "$current_object_name"
+		#sleep 5
+		#reset
+	fi
+	tput rc
+	tput el
+	echo -e "${MAGENTA}r${GREEN}> ${LIGHTBLACK}calls ${DEF}$recurse_calls${LIGHTBLACK} stack ${DEF}$recurse_stackdepth ${MAGENTA}#${LIGHTBLACK} files ${DEF}$recurse_files${LIGHTBLACK} dirs ${DEF}$recurse_dirs${LIGHTBLACK} depth ${DEF}$recurse_fsdepth ${MAGENTA}#${LIGHTBLACK} sizes ${DEF}$recurse_sizes${LIGHTBLACK} checksums ${DEF}$recurse_checksums ${MAGENTA}#${LIGHTBLACK} dupes ${DEF}${#superdupr_checksums[@]}${DEF}"
+	tput el
+	echo -e "${current_object_name}"
+}
+
+gui_super(){
+	p1="$1"
+	if [[ "$gui_super_init" == true ]]; then
+		gui_super_fn recurse_print "$p1"
+	else
+		gui_super_fn init
+		gui_super_fn header
+		gui_super_init=true
+	fi																		
+}
+gui_super_fn(){
+	p1="$1"
+	p2="$2"
+
+	display_length=$(tput cols)
+
+	case "$1" in
+		init)
+			reset
+			tput sc
+			tput civis
+			;;
+		header)
+			echo -e "${GREEN}  .dBBBBP   dBP dBP dBBBBBb  dBBBP dBBBBBb    dBBBBb  dBP dBP dBBBBBb dBBBBBb"
+			echo -e "${MAGENTA}  BP                    dB'            dBP       dB'              dB'     dBP"
+			echo -e "${GREEN}  \`BBBBb  dBP dBP   dBBBP' dBBP    dBBBBK   dBP dB' dBP dBP   dBBBP'  dBBBBK "
+			echo -e "${GREEN}     dBP dBP_dBP   dBP    dBP     dBP  BB  dBP dB' dBP_dBP   dBP     dBP  BB "
+			echo -e "${GREEN}dBBBBP' dBBBBBP   dBP    dBBBBP  dBP  dB' dBBBBB' dBBBBBP   dBP     dBP  dB'${DEF}"
+			echo
+			echo "superdupr started at $(date)"
+			echo "Scanning ${scandir}... Size filter: $(( sizefilter / 1024 / 1024 ))M"
+			tput sc
+			;;
+
+		recurse_print)
+			shift
+			tput rc
+			tput el
+			if [[ "$recurse_files" -ne 0 ]]; then
+				progress=$(( recurse_files + recurse_dirs ))
+
+				if [[ "$prescan_done" == false ]] && [[ -d "/proc/$prescan_pid" ]]; then
+					progress_total="$(</run/shm/superdupr_prescan)"
+				else
+					progress_total="$(</run/shm/superdupr_prescan)"
+					prescan_done=true
+					
+				fi
+
+				if [[ "$progress_total" -gt 0 ]]; then
+					progress_percent=$(( progress * 100 / progress_total * 100 / 100 )) # imitate floating point arithmetic with integers
+				else
+					progress_percent=0
+				fi
+
+				if [[ "$prescan_done" == true ]]; then
+					progress_string="${progress}/${progress_total} (${progress_percent}%)"
+				else
+					progress_string="${progress}/${progress_total}++ (${progress_percent}%)"
+				fi
+
+
+			fi
+				current_object_name="$p2"
+
+				while [[ ${#current_object_name} -ge $display_length ]]; do
+					#echo "reduce loop[${#current_object_name} > $display_length]:"
+					#echo "$current_object_name"
+					local reduction=true
+					current_object_name="${current_object_name:5}"
+				done
+				if [[ $reduction == true ]]; then
+					current_object_name="... ${current_object_name}"
+					current_object_name="${current_object_name:0:${display_length}}"
+					#echo "reduce result:"
+					#echo "$current_object_name"
+					#sleep 5
+					#reset
+				fi							
+			#echo -e "${LIGHTBLACK}calls ${DEF}$recurse_calls${LIGHTBLACK} stack ${DEF}$recurse_stackdepth ${MAGENTA}#${LIGHTBLACK} files ${DEF}$recurse_files${LIGHTBLACK} dirs ${DEF}$recurse_dirs${LIGHTBLACK} depth ${DEF}$recurse_fsdepth ${MAGENTA}#${LIGHTBLACK} sizes ${DEF}$recurse_sizes${LIGHTBLACK} checksums ${DEF}$recurse_checksums ${MAGENTA}#${LIGHTBLACK} dupes ${DEF}${#superdupr_checksums[@]}${DEF}"
+			tput el
+			echo "##############################################"
+			echo "#               $progress_string             #"
+			echo "##############################################"
+			echo 
+			tput el
+			echo "$current_object_name"
+			;;
+		stats_print)
+
+	esac
+}
+
 
 get_filesize(){
 	${os_filesize_in_bytes} "${1}"
@@ -83,9 +216,25 @@ get_sum(){
 }
 
 recurse_trace(){
-	tput rc
-	tput el
-	echo -n -e "${MAGENTA}r${GREEN}> ${LIGHTBLACK}calls ${DEF}$recurse_calls${LIGHTBLACK} stack ${DEF}$recurse_stackdepth ${MAGENTA}#${LIGHTBLACK} files ${DEF}$recurse_files${LIGHTBLACK} dirs ${DEF}$recurse_dirs${LIGHTBLACK} depth ${DEF}$recurse_fsdepth ${MAGENTA}#${LIGHTBLACK} sizes ${DEF}$recurse_sizes${LIGHTBLACK} checksums ${DEF}$recurse_checksums ${MAGENTA}#${LIGHTBLACK} dupes ${DEF}${#superdupr_checksums[@]}${DEF} ${MAGENTA}#${LIGHTBLACK} p1 ${DEF}${1}${DEF}"
+	superdupr_app recurse_trace "$1"
+
+}
+
+# prescan
+# essentially does the same as recurse, but without any actual work
+# counts how many files to process in the background, allowing superdupr to scan for duplicates at the same time
+prescan(){
+	for i in "$1"/*; do
+		if [[ -d "$i" ]] && ! [[ -L "$i" ]]; then
+			#echo dir
+			prescan "$i"
+			(( prescan_counter++ ))
+		elif [[ -f "$i" ]] && ! [[ -L "$i" ]]; then
+			#echo fil: "$i"
+			(( prescan_counter++ ))
+		fi
+		echo "$prescan_counter" > /run/shm/superdupr_prescan
+	done
 }
 
 # recurse
@@ -96,7 +245,6 @@ recurse_trace(){
 #           if filesize higher than sizelimit threshold
 #               store increment size counter for this size
 #               store filename in first occurence array if it is first file of this exact size
-
 recurse(){
 	recurse_trace "$1"
 	(( recurse_calls++ ))
@@ -140,49 +288,69 @@ recurse(){
 	recurse_trace "$1"
 }
 
-trap trap_handler EXIT SIGTERM
-echo "superdupr started at $(date)"
-get_os
-if [[ "$os_family" == 'Unknown' ]]; then
-	echo "Warning, unable to determine OS. Defaulting to generic Linux utilities syntax"
-fi
-echo "Scanning $(pwd)... Size filter: $(( sizefilter / 1024 / 1024 ))M"
-tput sc
-tput civis
-recurse "$scandir"
-echo
-if [[ "${#superdupr_checksums[@]}" -ge 1 ]]; then
-	echo -e "Found${LIGHTYELLOW}${#superdupr_checksums[@]}${DEF} possible duplicate(s)"
-	echo
-	fake_dupes=0
-	duplicate_counter=1
-	for sum in "${!superdupr_checksums[@]}"; do
+superdupr_app(){
+	case "$1" in
+		init)
+			trap trap_handler EXIT SIGTERM
+			get_os
+			if [[ "$os_family" == 'Unknown' ]]; then
+				echo "Warning, unable to determine OS. Defaulting to generic Linux utilities syntax"
+				sleep 1
+			fi
+			;;
 
-		declare -n filelist=${superdupr_checksums[${sum}]}
-		occurences="${#filelist[@]}"
-		filesize=$(( superdupr_sizes[${sum}] / 1024 / 1024 ))
-		totalsize=$(( filesize * occurences))
-		sizesave=$(( filesize * occurences - filesize ))
+		main)
+			"gui_${gui}" "$1"
 
-		if [[ "$occurences" -gt 1 ]]; then
-			echo -e "${LIGHTYELLOW}Duplicate #${duplicate_counter}${DEF} - ${LIGHTBLACK}$sum${DEF}:"
-			for file in "${filelist[@]}"; do
-				echo " $file"
-			done
+			prescan "$scandir" &
+			prescan_pid=${!}
+			
+			recurse "$scandir"
 			echo
-			echo -e " ${occurences} occurences x ${filesize}M = ${totalsize}M (${GREEN}${sizesave}M can be reclaimed${DEF})"
-			echo
-			echo -e "$LIGHTBLACK#########################################$DEF"
-			echo
-			echo
-			((duplicate_counter++))
-		else
-			(( fake_dupes++ ))
-		fi
+			if [[ "${#superdupr_checksums[@]}" -ge 1 ]]; then
+				echo -e "Found ${LIGHTYELLOW}${#superdupr_checksums[@]}${DEF} possible duplicate(s)"
+				echo
+				fake_dupes=0
+				duplicate_counter=1
+				for sum in "${!superdupr_checksums[@]}"; do
 
-	done
-	echo "${fake_dupes} entries was not printed since they matched on filesize only, not checksum"
-else
-	echo -e "${GREEN}No duplicates found!${DEF}"
-fi
+					declare -n filelist=${superdupr_checksums[${sum}]}
+					occurences="${#filelist[@]}"
+					filesize=$(( superdupr_sizes[${sum}] / 1024 / 1024 ))
+					totalsize=$(( filesize * occurences))
+					sizesave=$(( filesize * occurences - filesize ))
 
+					if [[ "$occurences" -gt 1 ]]; then
+						echo -e "${LIGHTYELLOW}Duplicate #${duplicate_counter}${DEF} - ${LIGHTBLACK}$sum${DEF}:"
+						for file in "${filelist[@]}"; do
+							echo " $file"
+						done
+						echo
+						echo -e " ${occurences} occurences x ${filesize}M = ${totalsize}M (${GREEN}${sizesave}M can be reclaimed${DEF})"
+						echo
+						echo -e "$LIGHTBLACK#########################################$DEF"
+						echo
+						echo
+						((duplicate_counter++))
+					else
+						(( fake_dupes++ ))
+					fi
+
+				done
+				echo "${fake_dupes} entries was not printed since they matched on filesize only, not checksum"
+			else
+				echo -e "${GREEN}No duplicates found!${DEF}"
+			fi
+
+			;;	
+		recurse_trace)
+			shift
+			"gui_${gui}" "$1"
+			;;
+	esac
+}
+superdupr_app init
+superdupr_app main
+
+#echo "Prescan running with ${prescan_pid} ($prescan_counter), waiting"
+#wait ${prescan_pid}
