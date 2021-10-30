@@ -91,16 +91,16 @@ get_os(){
 }
 gui_compact(){
 	current_object_name="$1"
-	display_length=$(tput cols)
-	while [[ ${#current_object_name} -ge $display_length ]]; do
-		#echo "reduce loop[${#current_object_name} > $display_length]:"
+	terminal_width=$(tput cols)
+	while [[ ${#current_object_name} -ge $terminal_width ]]; do
+		#echo "reduce loop[${#current_object_name} > $terminal_width]:"
 		#echo "$current_object_name"
 		local reduction=true
 		current_object_name="${current_object_name:5}"
 	done
 	if [[ $reduction == true ]]; then
 		current_object_name="... ${current_object_name}"
-		current_object_name="${current_object_name:0:${display_length}}"
+		current_object_name="${current_object_name:0:${terminal_width}}"
 		#echo "reduce result:"
 		#echo "$current_object_name"
 		#sleep 5
@@ -114,33 +114,95 @@ gui_compact(){
 }
 
 gui_super(){
-	p1="$1"
-	if [[ "$gui_super_init" == true ]]; then
-		gui_super_fn recurse_print "$p1"
-	else
-		gui_super_fn init
-		gui_super_fn header
-		gui_super_init=true
-	fi																		
+	local p1="$1"
+	gui_super_fn condreset
+	gui_super_fn recurse_print "$p1"																
 }
 gui_super_fn(){
-	p1="$1"
-	p2="$2"
-
-	display_length=$(tput cols)
+	local p1="$1"
+	local p2="$2"
+	local p3="$3"
 
 	case "$1" in
 		init)
 			reset
-			tput sc
+			gui_super_fn refresh_display_properties
+			gui_super_fn header
 			tput civis
 			;;
+		refresh_display_properties)
+			header_height=6
+			subheader_height=3
+			content_offset="$(( header_height + subheader_height ))"
+
+			terminal_width="$(tput cols)"
+			terminal_height="$(tput lines)"
+
+			terminal_x_center="$(( terminal_width / 2 ))"
+			terminal_y_center="$(( terminal_height / 2 ))"
+
+			# in case terminal width is in odd numbers
+			if [[ $(( terminal_width % 2 )) -ne 0 ]]; then
+				content_x_center="$(( terminal_x_center - 1 ))"
+			else
+				content_x_center="$terminal_x_center"
+			fi
+
+			if [[ $(( terminal_height % 2 )) -ne 0 ]]; then
+				content_y_center="$(( (terminal_height - 1 + content_offset) / 2 ))"
+			else
+				content_y_center="$(( (terminal_height + content_offset) / 2 ))"
+			fi
+
+			progress_dialog_upper="$(( content_y_center - 4 ))"
+			progress_dialog_lower="$(( content_y_center + 3 ))"
+			progress_dialog_left="$(( content_x_center / 4 ))"
+			progress_dialog_right="$(( terminal_width - content_x_center / 4 ))"
+			progress_dialog_length=$(( progress_dialog_right - progress_dialog_left ))
+			progress_dialog_height=$(( progress_dialog_lower - progress_dialog_upper ))
+
+			progress_dialog_content_upper=$(( progress_dialog_upper + 2 ))
+			progress_dialog_content_lower=$(( progress_dialog_lower - 2 ))
+			progress_dialog_content_left=$(( progress_dialog_left + 3 ))
+			progress_dialog_content_right=$(( progress_dialog_right - 3 ))
+			progress_dialog_content_length=$(( progress_dialog_content_right - progress_dialog_content_left ))
+			progress_dialog_content_height=$(( progress_dialog_content_lower - progress_dialog_content_upper ))
+
+			progress_dialog_content_bar_y="$progress_dialog_content_upper"
+			progress_dialog_content_bar_unit_size=$(( 100 * 100 / progress_dialog_content_length ))
+			progress_dialog_content_label_y="$(( progress_dialog_content_upper + 2 ))"
+
+			progress_dialog_content_text_y="$(( progress_dialog_content_upper + 3 ))"
+
+
+
+      		;;
+
+		condreset)
+			if [[ "$(tput cols)" -ne "$terminal_width" ]] || \
+			[[ "$(tput lines)" -ne "$terminal_height" ]]; then
+				clear
+				echo "Resizing terminal.."
+				sleep 0.1
+				gui_super_fn init
+				condreset=true
+				return 0
+			else
+				condreset=false
+				return 1
+			fi
+			;;
+		move)
+			#echo "Moving to X: $p3, Y: $p2"
+			tput cup "$p3" "$p2"
+			;;
+
 		header)
-			echo -e "${GREEN}  .dBBBBP   dBP dBP dBBBBBb  dBBBP dBBBBBb    dBBBBb  dBP dBP dBBBBBb dBBBBBb"
-			echo -e "${MAGENTA}  BP                    dB'            dBP       dB'              dB'     dBP"
-			echo -e "${GREEN}  \`BBBBb  dBP dBP   dBBBP' dBBP    dBBBBK   dBP dB' dBP dBP   dBBBP'  dBBBBK "
-			echo -e "${GREEN}     dBP dBP_dBP   dBP    dBP     dBP  BB  dBP dB' dBP_dBP   dBP     dBP  BB "
-			echo -e "${GREEN}dBBBBP' dBBBBBP   dBP    dBBBBP  dBP  dB' dBBBBB' dBBBBBP   dBP     dBP  dB'${DEF}"
+			echo -e "${GREEN}  .dBBBB5P   dBP dBP dBBBBBb  dBBBP dBBBBBb    dBBBBb  dBP dBP dBBBBBb dBBBBBb"
+			echo -e "${MAGENTA}  BP  5                  dB'            dBP       dB'              dB'     dBP"
+			echo -e "${GREEN}  \`BBBB5b  dBP dBP   dBBBP' dBBP    dBBBBK   dBP dB' dBP dBP   dBBBP'  dBBBBK "
+			echo -e "${GREEN}     dBP5 dBP_dBP   dBP    dBP     dBP  BB  dBP dB' dBP_dBP   dBP     dBP  BB "
+			echo -e "${GREEN}dBBBBP' 5dBBBBBP   dBP    dBBBBP  dBP  dB' dBBBBB' dBBBBBP   dBP     dBP  dB'${DEF}"
 			echo
 			echo "superdupr started at $(date)"
 			echo "Scanning ${scandir}... Size filter: $(( sizefilter / 1024 / 1024 ))M"
@@ -169,37 +231,77 @@ gui_super_fn(){
 				fi
 
 				if [[ "$prescan_done" == true ]]; then
-					progress_string="${progress}/${progress_total} (${progress_percent}%)"
+					progress_bar_string=""
+					progress_bar_remainder=$((progress_percent * 100 ))
+					while [[ ${progress_bar_remainder} -gt ${progress_dialog_content_bar_unit_size} ]]; do
+						progress_bar_string="${progress_bar_string}█"
+						progress_bar_remainder=$(( progress_bar_remainder - progress_dialog_content_bar_unit_size ))
+						####DEBUG#### tput el
+						####DEBUG#### echo "$progress_bar_remainder/$progress_percent/$progress_dialog_content_bar_unit_size:$progress_bar_string"
+						####DEBUG#### sleep 0.1
+						tput rc
+					done
+					progress_string="${progress}/${progress_total}"
 				else
-					progress_string="${progress}/${progress_total}++ (${progress_percent}%)"
+					progress_bar_string="(prescan in progress)"
+					progress_string="${progress}/${progress_total}++"
 				fi
-
 
 			fi
 				current_object_name="$p2"
 
-				while [[ ${#current_object_name} -ge $display_length ]]; do
-					#echo "reduce loop[${#current_object_name} > $display_length]:"
+				while [[ ${#current_object_name} -ge $progress_dialog_content_length ]]; do
+					#echo "reduce loop[${#current_object_name} > $progress_dialog_content_length]:"
 					#echo "$current_object_name"
 					local reduction=true
 					current_object_name="${current_object_name:5}"
 				done
 				if [[ $reduction == true ]]; then
 					current_object_name="... ${current_object_name}"
-					current_object_name="${current_object_name:0:${display_length}}"
+					current_object_name="${current_object_name:0:${progress_dialog_content_length}}"
 					#echo "reduce result:"
 					#echo "$current_object_name"
 					#sleep 5
 					#reset
 				fi							
 			#echo -e "${LIGHTBLACK}calls ${DEF}$recurse_calls${LIGHTBLACK} stack ${DEF}$recurse_stackdepth ${MAGENTA}#${LIGHTBLACK} files ${DEF}$recurse_files${LIGHTBLACK} dirs ${DEF}$recurse_dirs${LIGHTBLACK} depth ${DEF}$recurse_fsdepth ${MAGENTA}#${LIGHTBLACK} sizes ${DEF}$recurse_sizes${LIGHTBLACK} checksums ${DEF}$recurse_checksums ${MAGENTA}#${LIGHTBLACK} dupes ${DEF}${#superdupr_checksums[@]}${DEF}"
-			tput el
-			echo "##############################################"
-			echo "#               $progress_string             #"
-			echo "##############################################"
-			echo 
-			tput el
-			echo "$current_object_name"
+			#tput el
+			####DEBUG#### clear
+			####DEBUG#### echo "terminal_width:          $terminal_width"
+			####DEBUG#### echo "terminal_height:         $terminal_height"
+			####DEBUG#### echo
+			####DEBUG#### echo "terminal_x_center:       $terminal_x_center"
+			####DEBUG#### echo "terminal_y_center:       $terminal_y_center"
+			####DEBUG#### echo "content_x_center:        $content_x_center"
+			####DEBUG#### echo "content_y_center:        $content_y_center"
+			####DEBUG####
+			####DEBUG#### echo "progress_dialog_upper:   $progress_dialog_upper"
+			####DEBUG#### echo "progress_dialog_lower:   $progress_dialog_lower"
+			####DEBUG#### echo "progress_dialog_left:    $progress_dialog_left"
+			####DEBUG#### echo "progress_dialog_right:   $progress_dialog_right"
+			####DEBUG#### echo "progress_dialog_length:  $progress_dialog_length"
+			####DEBUG#### 
+			####DEBUG#### echo "progress_dialog_content_left:   $progress_dialog_content_left"
+			####DEBUG#### echo "progress_dialog_content_right:  $progress_dialog_content_right"
+			####DEBUG#### echo "progress_dialog_content_length: $progress_dialog_content_length"
+			####DEBUG#### gui_super_fn move $progress_dialog_left $progress_dialog_upper && echo Q
+			####DEBUG#### gui_super_fn move $progress_dialog_right $progress_dialog_upper && echo E
+			####DEBUG#### gui_super_fn move $progress_dialog_left $progress_dialog_lower && echo A
+			####DEBUG#### gui_super_fn move $progress_dialog_right $progress_dialog_lower && echo D
+			####DEBUG#### gui_super_fn move $progress_dialog_content_left $progress_dialog_content_bar_y && echo BAR
+			####DEBUG#### gui_super_fn move $progress_dialog_content_left $progress_dialog_content_label_y && echo LABEL
+			####DEBUG#### gui_super_fn move $progress_dialog_content_left $progress_dialog_content_text_y && echo TEXT
+			####DEBUG#### gui_super_fn move 0 $progress_dialog_lower
+			####DEBUG#### echo
+			####DEBUG#### echo
+			####DEBUG#### exit
+			gui_super_fn move $progress_dialog_left $progress_dialog_upper && echo ┌
+			gui_super_fn move $progress_dialog_right $progress_dialog_upper && echo ┐
+			gui_super_fn move $progress_dialog_left $progress_dialog_lower && echo └
+			gui_super_fn move $progress_dialog_right $progress_dialog_lower && echo ┘
+			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_bar_y && echo -e "${LIGHTBLACK}${progress_bar_string}${DEF}"
+			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_label_y && echo "Current object ($progress_string):"
+			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_text_y && tput el && echo "$current_object_name"
 			;;
 		stats_print)
 
@@ -300,13 +402,14 @@ superdupr_app(){
 			;;
 
 		main)
-			"gui_${gui}" "$1"
-
+			#"gui_${gui}"
+			#"gui_${gui}" recurse_trace hello---world
+			#exit
 			prescan "$scandir" &
 			prescan_pid=${!}
 			
 			recurse "$scandir"
-			echo
+			clear
 			if [[ "${#superdupr_checksums[@]}" -ge 1 ]]; then
 				echo -e "Found ${LIGHTYELLOW}${#superdupr_checksums[@]}${DEF} possible duplicate(s)"
 				echo
