@@ -7,14 +7,14 @@
 # [ ] Summarize all findings (number of GB possiple to save if all files were to be deduplicated)
 # [ ] Sizefilter based on minumum saving per duplicate instead of filesize
 # [ ] Store results to file
-# [ ] Implement supdup visualiser
+# [X] Implement progress bar
 # [ ] Debug toggle
 # [ ] Limit amount of files showed in duplicate summary. File x, y, z "and 2 other files"
 # [X] Better OS compatibility (make it work on macOS, not just Linux)
 # [ ] Support common sizes for sizefilter param (B,K,M,G,T)
 # [ ] Help switch
 # [X] Truncate when filenames are too long to prevent newlines during file scan
-# [ ] Add non-compact GUI, use this as default?
+# [X] Add non-compact GUI, use this as default?
 # [ ] Strip uneccessary trailing forwardslash from $1
 # [ ] Verify that $1 is a directory
 # Known bugs
@@ -90,6 +90,7 @@ get_os(){
 
 }
 gui_compact(){
+	tput civis
 	current_object_name="$1"
 	terminal_width=$(tput cols)
 	while [[ ${#current_object_name} -ge $terminal_width ]]; do
@@ -170,6 +171,7 @@ gui_super_fn(){
 
 			progress_dialog_content_bar_y="$progress_dialog_content_upper"
 			progress_dialog_content_bar_unit_size=$(( 100 * 100 / progress_dialog_content_length ))
+			progress_dialog_content_bar_label_offset_x=$(( content_x_center - 2 ))
 			progress_dialog_content_label_y="$(( progress_dialog_content_upper + 2 ))"
 
 			progress_dialog_content_text_y="$(( progress_dialog_content_upper + 3 ))"
@@ -198,11 +200,11 @@ gui_super_fn(){
 			;;
 
 		header)
-			echo -e "${GREEN}  .dBBBB5P   dBP dBP dBBBBBb  dBBBP dBBBBBb    dBBBBb  dBP dBP dBBBBBb dBBBBBb"
-			echo -e "${MAGENTA}  BP  5                  dB'            dBP       dB'              dB'     dBP"
-			echo -e "${GREEN}  \`BBBB5b  dBP dBP   dBBBP' dBBP    dBBBBK   dBP dB' dBP dBP   dBBBP'  dBBBBK "
-			echo -e "${GREEN}     dBP5 dBP_dBP   dBP    dBP     dBP  BB  dBP dB' dBP_dBP   dBP     dBP  BB "
-			echo -e "${GREEN}dBBBBP' 5dBBBBBP   dBP    dBBBBP  dBP  dB' dBBBBB' dBBBBBP   dBP     dBP  dB'${DEF}"
+			echo -e "${GREEN}  .dBBBBP   dBP dBP dBBBBBb  dBBBP dBBBBBb    dBBBBb  dBP dBP dBBBBBb dBBBBBb"
+			echo -e "${MAGENTA}  BP                    dB'            dBP       dB'              dB'     dBP"
+			echo -e "${GREEN}  \`BBBBb  dBP dBP   dBBBP' dBBP    dBBBBK   dBP dB' dBP dBP   dBBBP'  dBBBBK "
+			echo -e "${GREEN}     dBP dBP_dBP   dBP    dBP     dBP  BB  dBP dB' dBP_dBP   dBP     dBP  BB "
+			echo -e "${GREEN}dBBBBP' dBBBBBP   dBP    dBBBBP  dBP  dB' dBBBBB' dBBBBBP   dBP     dBP  dB'${DEF}"
 			echo
 			echo "superdupr started at $(date)"
 			echo "Scanning ${scandir}... Size filter: $(( sizefilter / 1024 / 1024 ))M"
@@ -211,8 +213,6 @@ gui_super_fn(){
 
 		recurse_print)
 			shift
-			tput rc
-			tput el
 			if [[ "$recurse_files" -ne 0 ]]; then
 				progress=$(( recurse_files + recurse_dirs ))
 
@@ -226,8 +226,16 @@ gui_super_fn(){
 
 				if [[ "$progress_total" -gt 0 ]]; then
 					progress_percent=$(( progress * 100 / progress_total * 100 / 100 )) # imitate floating point arithmetic with integers
+					if [[ "$progress_percent" -lt 10 ]]; then
+						progress_percent_string=" ${progress_percent}% "
+					elif [[ "$progress_percent" -ge 10 ]]; then
+						progress_percent_string="${progress_percent} %"
+					elif [[ "$progress_percent" -eq 100 ]]; then
+						progress_percent_string="${progress_percent}%"
+					fi
 				else
 					progress_percent=0
+					progress_percent_string=" ${progress_percent}% "
 				fi
 
 				if [[ "$prescan_done" == true ]]; then
@@ -244,6 +252,7 @@ gui_super_fn(){
 					progress_string="${progress}/${progress_total}"
 				else
 					progress_bar_string="(prescan in progress)"
+					progress_percent_string=""
 					progress_string="${progress}/${progress_total}++"
 				fi
 
@@ -295,12 +304,25 @@ gui_super_fn(){
 			####DEBUG#### echo
 			####DEBUG#### echo
 			####DEBUG#### exit
+			tput rc
+			echo
+			tput el
+			echo -e "${LIGHTBLACK} recurse calls            ${DEF}$recurse_calls          "
+			echo -e "${LIGHTBLACK} recurse stackdepth       ${DEF}$recurse_stackdepth     "
+			echo -e "${LIGHTBLACK} file counter             ${DEF}$recurse_files          "
+			echo -e "${LIGHTBLACK} dir counter              ${DEF}$recurse_dirs           "
+			echo -e "${LIGHTBLACK} current directory depth  ${DEF}$recurse_fsdepth        "
+			echo -e "${LIGHTBLACK} files within size filter ${DEF}$recurse_sizes          "
+			echo -e "${LIGHTBLACK} files checksummed        ${DEF}$recurse_checksums      "
+			echo -e "${LIGHTBLACK} possible duplicates      ${DEF}${#superdupr_checksums[@]}${DEF}      "
+			echo -e "${LIGHTBLACK} recurse action           ${DEF}$recurse_action         "
 			gui_super_fn move $progress_dialog_left $progress_dialog_upper && echo ┌
 			gui_super_fn move $progress_dialog_right $progress_dialog_upper && echo ┐
 			gui_super_fn move $progress_dialog_left $progress_dialog_lower && echo └
 			gui_super_fn move $progress_dialog_right $progress_dialog_lower && echo ┘
-			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_bar_y && echo -e "${LIGHTBLACK}${progress_bar_string}${DEF}"
-			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_label_y && echo "Current object ($progress_string):"
+			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_bar_y && tput el && echo -e "${LIGHTBLACK}${progress_bar_string}${DEF}"
+			gui_super_fn move $progress_dialog_content_bar_label_offset_x $progress_dialog_content_bar_y && echo -e "${progress_percent_string}"
+			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_label_y && tput el && echo "Current object ($progress_string):"
 			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_text_y && tput el && echo "$current_object_name"
 			;;
 		stats_print)
@@ -348,7 +370,7 @@ prescan(){
 #               store increment size counter for this size
 #               store filename in first occurence array if it is first file of this exact size
 recurse(){
-	recurse_trace "$1"
+	recurse_action="recurse dir" && recurse_trace "$1"
 	(( recurse_calls++ ))
 	(( recurse_stackdepth++ ))
 	for i in "$1"/*; do
@@ -358,7 +380,7 @@ recurse(){
 			recurse "$i"
 			(( recurse_fsdepth--))
 		elif [[ -f "$i" ]] && ! [[ -L "$i" ]]; then
-			recurse_trace "$i"
+			recurse_action="read file" && recurse_trace "$i"
 			(( recurse_files++ ))
 			size=$(get_filesize "$i")
 			if [[ "$size" -gt "$sizefilter" ]] ; then
@@ -368,6 +390,7 @@ recurse(){
 					superdupr_size_first_occurence[${size}]="$i"
 				fi
 				if [[ "${superdupr_size_counter[${size}]}" -eq "2" ]] ; then
+					recurse_action="checksumming" && recurse_trace "$i"
 					crcsum=$(get_sum "${superdupr_size_first_occurence[${size}]}")
 					superdupr_checksums[${crcsum}]="superdupr_filelist_checksum_$crcsum"
 					superdupr_sizes[${crcsum}]="${size}"
@@ -376,6 +399,7 @@ recurse(){
 					(( recurse_checksums++ ))
 				fi
 				if [[ "${superdupr_size_counter[${size}]}" -ge "2" ]] ; then
+					recurse_action="checksumming" && recurse_trace "$i"
 					crcsum="$(get_sum "$i")"
 					superdupr_checksums[${crcsum}]="superdupr_filelist_checksum_$crcsum"
 					superdupr_sizes[${crcsum}]="${size}"
