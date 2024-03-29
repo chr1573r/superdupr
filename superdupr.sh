@@ -5,7 +5,7 @@
 # Todo/Features wishlist:
 # [ ] Ability to collect/display likely matches (same number of bytes, yet different checksum)
 # [ ] Summarize all findings (number of GB possiple to save if all files were to be deduplicated)
-# [ ] Sizefilter based on minumum saving per duplicate instead of filesize
+# [ ] Sizefilter based on minimum saving per duplicate instead of filesize
 # [ ] Store results to file
 # [X] Implement progress bar
 # [ ] Debug toggle
@@ -15,15 +15,12 @@
 # [ ] Help switch
 # [X] Truncate when filenames are too long to prevent newlines during file scan
 # [X] Add non-compact GUI, use this as default?
-# [ ] Strip uneccessary trailing forwardslash from $1
-# [ ] Verify that $1 is a directory
+# [X] Strip uneccessary trailing forwardslash from $1
+# [X] Verify that $1 is a directory
 # Known bugs
 # - Filename truncation does not seem to work with non-latin characters (such as japanese hiragana)
 
-scandir="$1"
-! [[ -d "$1" ]] && echo -e "'$1' is not a valid directory." && exit
-[[ -z "$2" ]] && sizefilter="0" || sizefilter="$2"
-sizefilter=$(( sizefilter * 1024 * 1024 ))
+
 
 gui=super
 
@@ -34,7 +31,6 @@ recurse_dirs=0
 recurse_fsdepth=0
 recurse_sizes=0
 recurse_checksums=0
-superdupr_checksums=0
 
 
 export prescan_counter=0
@@ -423,6 +419,7 @@ superdupr_app(){
 				echo "Warning, unable to determine OS. Defaulting to generic Linux utilities syntax"
 				sleep 1
 			fi
+			! [[ -d "$scandir" ]] && echo -e "FATAL: '$scandir' is not a valid directory." && exit
 			;;
 
 		main)
@@ -437,23 +434,24 @@ superdupr_app(){
 			if [[ "${#superdupr_checksums[@]}" -ge 1 ]]; then
 				echo -e "Found ${LIGHTYELLOW}${#superdupr_checksums[@]}${DEF} possible duplicate(s)"
 				echo
+
 				fake_dupes=0
 				duplicate_counter=1
+
 				for sum in "${!superdupr_checksums[@]}"; do
-
 					declare -n filelist=${superdupr_checksums[${sum}]}
-					occurences="${#filelist[@]}"
+					occurrences="${#filelist[@]}"
 					filesize=$(( superdupr_sizes[${sum}] / 1024 / 1024 ))
-					totalsize=$(( filesize * occurences))
-					sizesave=$(( filesize * occurences - filesize ))
-
-					if [[ "$occurences" -gt 1 ]]; then
+					totalsize=$(( filesize * occurrences))
+					sizesave=$(( filesize * occurrences - filesize ))
+					sizesavetotal=$(( sizesavetotal + sizesave ))
+					if [[ "$occurrences" -gt 1 ]]; then
 						echo -e "${LIGHTYELLOW}Duplicate #${duplicate_counter}${DEF} - ${LIGHTBLACK}$sum${DEF}:"
 						for file in "${filelist[@]}"; do
 							echo " $file"
 						done
 						echo
-						echo -e " ${occurences} occurences x ${filesize}M = ${totalsize}M (${GREEN}${sizesave}M can be reclaimed${DEF})"
+						echo -e " ${occurrences} occurrences x ${filesize}M = ${totalsize}M (${GREEN}${sizesave}M can be reclaimed${DEF})"
 						echo
 						echo -e "$LIGHTBLACK#########################################$DEF"
 						echo
@@ -464,7 +462,13 @@ superdupr_app(){
 					fi
 
 				done
-				echo "${fake_dupes} entries was not printed since they matched on filesize only, not checksum"
+
+				echo -e "${LIGHTYELLOW}Total space that can be reclaimed: ${DEF}${GREEN}${sizesavetotal}M${DEF}"
+				echo
+				if [[ "$fake_dupes" -gt 0 ]]; then
+					echo "${fake_dupes} entries was not printed since they matched on filesize only, not checksum"
+				fi
+
 			else
 				echo -e "${GREEN}No duplicates found!${DEF}"
 			fi
@@ -474,8 +478,28 @@ superdupr_app(){
 			shift
 			"gui_${gui}" "$1"
 			;;
+		help)
+			echo "Usage: superdupr.sh <directory> [sizefilter]"
+			echo "Sizefilter is in MB"
+			;;
 	esac
 }
+
+
+if [[ -z "$1" ]]; then
+	superdupr_app help
+	exit
+else
+	scandir="${1%/}"
+fi
+
+if [[ -z "$2" ]]; then
+	sizefilter="0"
+else
+	sizefilter="$2"
+fi
+sizefilter=$(( sizefilter * 1024 * 1024 ))
+
 superdupr_app init
 superdupr_app main
 
