@@ -1,6 +1,8 @@
-
-   
 #!/usr/bin/env bash
+if [[ "${BASH_VERSINFO[0]}" -lt 4 ]] || { [[ "${BASH_VERSINFO[0]}" -eq 4 ]] && [[ "${BASH_VERSINFO[1]}" -lt 3 ]]; }; then
+	echo "ERROR: superdupr requires bash 4.3 or newer (found bash ${BASH_VERSION})"
+	exit 1
+fi
 # superdupr
 # Todo/Features wishlist:
 # [ ] Ability to collect/display likely matches (same number of bytes, yet different checksum)
@@ -35,13 +37,14 @@ recurse_checksums=0
 
 export prescan_counter=0
 export prescan_done=false
-echo "$prescan_counter" > /run/shm/superdupr_prescan
+prescan_file=''
 
 declare -A superdupr_size_counter
 declare -A superdupr_sizes
 declare -A superdupr_checksums
 
 
+# shellcheck disable=SC2034  # color vars are used in echo -e strings; shellcheck can't see that
 DEF="\x1b[0m"
 GRAY="\x1b[37;0m"
 LIGHTBLACK="\x1b[30;01m"
@@ -69,21 +72,34 @@ trap_handler(){
 }
 
 get_os(){
-	# fallback and Linux will use assume GNU/Linux binaries, not BSD binaries/syntax
+	# fallback: assume GNU/Linux binaries, not BSD binaries/syntax
 	os_family="Unknown"
 	os_id="Fallback"
 	os_filesize_in_bytes='stat -c%s'
+	os_checksum='shasum_gnu'
+	os_shm_dir='/tmp'
 
 	if [[ -f '/etc/os-release' ]]; then
-		 source /etc/os-release
-		 os_family=Linux
-		 os_id=$ID
+		# shellcheck source=/dev/null
+		source /etc/os-release
+		os_family=Linux
+		os_id=$ID
+		os_checksum='shasum_gnu'
+		# Prefer /run/shm (RAM-backed tmpfs) when available
+		[[ -d '/run/shm' ]] && os_shm_dir='/run/shm'
 	elif hash sw_vers &> /dev/null; then
 		os_family=Darwin
 		os_id=$(sw_vers -productName)
 		os_filesize_in_bytes='stat -f%z'
+		os_checksum='shasum_gnu'
+		os_shm_dir="${TMPDIR:-/tmp}"
+	elif [[ "$(uname -s 2>/dev/null)" == 'FreeBSD' ]]; then
+		os_family=FreeBSD
+		os_id=FreeBSD
+		os_filesize_in_bytes='stat -f%z'
+		os_checksum='shasum_bsd'
+		os_shm_dir='/tmp'
 	fi
-
 }
 gui_compact(){
 	tput civis
@@ -212,16 +228,16 @@ gui_super_fn(){
 			if [[ "$recurse_files" -ne 0 ]]; then
 				progress=$(( recurse_files + recurse_dirs ))
 
-				if [[ "$prescan_done" == false ]] && [[ -d "/proc/$prescan_pid" ]]; then
-					progress_total="$(</run/shm/superdupr_prescan)"
+				if [[ "$prescan_done" == false ]] && kill -0 "$prescan_pid" 2>/dev/null; then
+					progress_total="$(<"$prescan_file")"
 				else
-					progress_total="$(</run/shm/superdupr_prescan)"
+					progress_total="$(<"$prescan_file")"
 					prescan_done=true
 					
 				fi
 
 				if [[ "$progress_total" -gt 0 ]]; then
-					progress_percent=$(( progress * 100 / progress_total * 100 / 100 )) # imitate floating point arithmetic with integers
+					progress_percent=$(( progress * 100 / progress_total ))
 					if [[ "$progress_percent" -lt 10 ]]; then
 						progress_percent_string=" ${progress_percent}% "
 					elif [[ "$progress_percent" -ge 10 ]]; then
@@ -312,14 +328,14 @@ gui_super_fn(){
 			echo -e "${LIGHTBLACK} files checksummed        ${DEF}$recurse_checksums      "
 			echo -e "${LIGHTBLACK} possible duplicates      ${DEF}${#superdupr_checksums[@]}${DEF}      "
 			echo -e "${LIGHTBLACK} recurse action           ${DEF}$recurse_action         "
-			gui_super_fn move $progress_dialog_left $progress_dialog_upper && echo ┌
-			gui_super_fn move $progress_dialog_right $progress_dialog_upper && echo ┐
-			gui_super_fn move $progress_dialog_left $progress_dialog_lower && echo └
-			gui_super_fn move $progress_dialog_right $progress_dialog_lower && echo ┘
-			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_bar_y && tput el && echo -e "${LIGHTBLACK}${progress_bar_string}${DEF}"
-			gui_super_fn move $progress_dialog_content_bar_label_offset_x $progress_dialog_content_bar_y && echo -e "${progress_percent_string}"
-			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_label_y && tput el && echo "Current object ($progress_string):"
-			gui_super_fn move $progress_dialog_content_left $progress_dialog_content_text_y && tput el && echo "$current_object_name"
+			gui_super_fn move "$progress_dialog_left" "$progress_dialog_upper" && echo ┌
+			gui_super_fn move "$progress_dialog_right" "$progress_dialog_upper" && echo ┐
+			gui_super_fn move "$progress_dialog_left" "$progress_dialog_lower" && echo └
+			gui_super_fn move "$progress_dialog_right" "$progress_dialog_lower" && echo ┘
+			gui_super_fn move "$progress_dialog_content_left" "$progress_dialog_content_bar_y" && tput el && echo -e "${LIGHTBLACK}${progress_bar_string}${DEF}"
+			gui_super_fn move "$progress_dialog_content_bar_label_offset_x" "$progress_dialog_content_bar_y" && echo -e "${progress_percent_string}"
+			gui_super_fn move "$progress_dialog_content_left" "$progress_dialog_content_label_y" && tput el && echo "Current object ($progress_string):"
+			gui_super_fn move "$progress_dialog_content_left" "$progress_dialog_content_text_y" && tput el && echo "$current_object_name"
 			;;
 		stats_print)
 
@@ -332,7 +348,10 @@ get_filesize(){
 }
 
 get_sum(){
-  shasum "${1}" | cut -f1 -d' '
+	case "$os_checksum" in
+		shasum_bsd) sha1 -q "${1}" ;;
+		*)          shasum "${1}" | cut -f1 -d' ' ;;
+	esac
 }
 
 recurse_trace(){
@@ -353,7 +372,7 @@ prescan(){
 			#echo fil: "$i"
 			(( prescan_counter++ ))
 		fi
-		echo "$prescan_counter" > /run/shm/superdupr_prescan
+		echo "$prescan_counter" > "$prescan_file"
 	done
 }
 
@@ -383,13 +402,15 @@ recurse(){
 				(( superdupr_size_counter[${size}]++ ))
 				(( recurse_sizes++ ))
 				if [[ "${superdupr_size_counter[${size}]}" -eq "1" ]] ; then
-					superdupr_size_first_occurence[${size}]="$i"
+					# shellcheck disable=SC2004
+				superdupr_size_first_occurence[$size]="$i"
 				fi
 				if [[ "${superdupr_size_counter[${size}]}" -eq "2" ]] ; then
 					recurse_action="checksumming" && recurse_trace "$i"
 					crcsum=$(get_sum "${superdupr_size_first_occurence[${size}]}")
 					superdupr_checksums[${crcsum}]="superdupr_filelist_checksum_$crcsum"
 					superdupr_sizes[${crcsum}]="${size}"
+					# shellcheck disable=SC2178
 					declare -n filelist="superdupr_filelist_checksum_$crcsum"
 					filelist+=("${superdupr_size_first_occurence[${size}]}")
 					(( recurse_checksums++ ))
@@ -399,6 +420,7 @@ recurse(){
 					crcsum="$(get_sum "$i")"
 					superdupr_checksums[${crcsum}]="superdupr_filelist_checksum_$crcsum"
 					superdupr_sizes[${crcsum}]="${size}"
+					# shellcheck disable=SC2178
 					declare -n filelist="superdupr_filelist_checksum_$crcsum"
 					filelist+=("$i")
 					(( recurse_checksums++ ))
@@ -419,6 +441,8 @@ superdupr_app(){
 				echo "Warning, unable to determine OS. Defaulting to generic Linux utilities syntax"
 				sleep 1
 			fi
+			prescan_file="${os_shm_dir}/superdupr_prescan"
+			echo "$prescan_counter" > "$prescan_file"
 			! [[ -d "$scandir" ]] && echo -e "FATAL: '$scandir' is not a valid directory." && exit
 			;;
 
@@ -439,7 +463,8 @@ superdupr_app(){
 				duplicate_counter=1
 
 				for sum in "${!superdupr_checksums[@]}"; do
-					declare -n filelist=${superdupr_checksums[${sum}]}
+					# shellcheck disable=SC2178
+				declare -n filelist=${superdupr_checksums[${sum}]}
 					occurrences="${#filelist[@]}"
 					filesize=$(( superdupr_sizes[${sum}] / 1024 / 1024 ))
 					totalsize=$(( filesize * occurrences))
