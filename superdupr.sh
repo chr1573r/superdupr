@@ -13,7 +13,7 @@ fi
 # [ ] Debug toggle
 # [ ] Limit amount of files showed in duplicate summary. File x, y, z "and 2 other files"
 # [X] Better OS compatibility (make it work on macOS, not just Linux)
-# [ ] Support common sizes for sizefilter param (B,K,M,G,T)
+# [X] Support common sizes for sizefilter param (B,K,M,G,T)
 # [ ] Help switch
 # [X] Truncate when filenames are too long to prevent newlines during file scan
 # [X] Add non-compact GUI, use this as default?
@@ -219,7 +219,7 @@ gui_super_fn(){
 			echo -e "${GREEN}dBBBBP' dBBBBBP   dBP    dBBBBP  dBP  dB' dBBBBB' dBBBBBP   dBP     dBP  dB'${DEF}"
 			echo
 			echo "superdupr started at $(date)"
-			echo "Scanning ${scandir}... Size filter: $(( sizefilter / 1024 / 1024 ))M"
+			echo "Scanning ${scandir}... Size filter: ${sizefilter_display}"
 			tput sc
 			;;
 
@@ -505,7 +505,7 @@ superdupr_app(){
 			;;
 		help)
 			echo "Usage: superdupr.sh <directory> [sizefilter]"
-			echo "Sizefilter is in MB"
+			echo "Sizefilter accepts a number with optional suffix: B, K, M (default), G, or T (e.g. 100M, 1G)"
 			;;
 	esac
 }
@@ -520,10 +520,24 @@ fi
 
 if [[ -z "$2" ]]; then
 	sizefilter="0"
+	sizefilter_display="none"
 else
-	sizefilter="$2"
+	if [[ "$2" =~ ^([0-9]+)([BbKkMmGgTt]?)$ ]]; then
+		sizefilter_num="${BASH_REMATCH[1]}"
+		sizefilter_suffix="${BASH_REMATCH[2]^^}"
+	else
+		echo "ERROR: Invalid sizefilter '${2}'. Use a number with optional suffix B, K, M, G, or T."
+		exit 1
+	fi
+	case "$sizefilter_suffix" in
+		B)    sizefilter="$sizefilter_num" ;;
+		K)    sizefilter=$(( sizefilter_num * 1024 )) ;;
+		""|M) sizefilter=$(( sizefilter_num * 1024 * 1024 )); sizefilter_suffix=M ;;
+		G)    sizefilter=$(( sizefilter_num * 1024 * 1024 * 1024 )) ;;
+		T)    sizefilter=$(( sizefilter_num * 1024 * 1024 * 1024 * 1024 )) ;;
+	esac
+	sizefilter_display="${sizefilter_num}${sizefilter_suffix}"
 fi
-sizefilter=$(( sizefilter * 1024 * 1024 ))
 
 superdupr_app init
 superdupr_app main
